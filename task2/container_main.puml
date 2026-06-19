@@ -1,0 +1,56 @@
+@startuml Архитектура_АгроТех_C2_Решение_Б
+
+!include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
+
+title Контейнерная диаграмма (C2): Вариант Б - Хореография событий
+
+Person(оператор, "Диспетчер")
+Person(дежурный, "Дежурный на ферме")
+
+System_Ext(kafka, "Apache Kafka", "Центральная шина платформы 'АгроПром Х'")
+System_Ext(мобильное_приложение, "Мобильное приложение", "Flutter")
+
+System_Boundary(livestock_system_boundary, "Система мониторинга животноводства (Edge Cluster)") {
+    
+    Container(local_broker, "Локальный брокер сообщений", "RabbitMQ", "Шина событий. Маршрутизирует факты (events) между независимыми сервисами")
+    
+    Container(video_analyzer, "Модуль видеоаналитики", "Python (ONNX / FastStream)", "Захват RTSP, инференс, публикация факта аномалии ('incident.detected')")
+    
+    Container(iot_gateway, "IoT Шлюз автоматизации", "Python / Go", "Реактивный шлюз. Слушает события аномалий и таймаутов, управляет сиреной/кормушками. Публикует метрики оборудования ('telemetry.received')")
+    
+    Container(platform_bridge, "Мост синхронизации (Bridge)", "Python (FastStream)", "Слушает локальные события, транслирует их в центральную Kafka. Отслеживает центральный ACK")
+    
+    Container(history_logger, "Сервис истории и аудита", "Python (SQLAlchemy)", "Пассивный подписчик на абсолютно все локальные события. Записывает их в лог для локального анализа")
+    
+    ContainerDb(local_db, "Локальная БД", "PostgreSQL", "Локальный лог инцидентов, телеметрии и настроек устройств")
+}
+
+System_Boundary(farm_hardware, "Оборудование Фермы") {
+    System_Ext(cameras, "Камеры", "RTSP")
+    System_Ext(feeders, "Кормушки/Поилки", "Modbus / MQTT")
+    System_Ext(siren, "Локальная сирена/лампа", "GPIO / Реле")
+}
+
+Rel(оператор, мобильное_приложение, "Получает уведомления")
+Rel(kafka, мобильное_приложение, "Push нотификации")
+
+Rel(cameras, video_analyzer, "Передача видеопотока", "RTSP")
+Rel(video_analyzer, local_broker, "Публикация факта: 'incident.detected'", "AMQP")
+Rel(video_analyzer, local_broker, "Публикация метрик", "AMQP")
+
+Rel(feeders, iot_gateway, "Телеметрия расхода корма/воды", "MQTT / Modbus")
+Rel(iot_gateway, local_broker, "Публикация факта: 'telemetry.received'", "AMQP")
+Rel(local_broker, iot_gateway, "Подписка на 'incident.detected' и 'central.ack_timeout'", "AMQP")
+Rel(iot_gateway, feeders, "Управление дозированием (по расписанию из события)", "Modbus TCP")
+Rel(iot_gateway, siren, "Включение сирены при получении 'incident.detected' по истечении таймаута, если не получил 'central.ack'", "GPIO / Реле")
+
+Rel(local_broker, platform_bridge, "Подписка на 'incident.detected' и 'telemetry.received'", "AMQP")
+Rel(platform_bridge, kafka, "Транзит событий в центр (со статусом PENDING)", "Kafka Protocol (TLS)")
+Rel(kafka, platform_bridge, "Чтение входящих ACK-сообщений от Flutter", "Kafka Protocol")
+
+Rel(platform_bridge, local_broker, "Публикация факта: 'central.ack'", "AMQP")
+
+Rel(local_broker, history_logger, "Подписка на все события (*.*)", "AMQP")
+Rel(history_logger, local_db, "Запись истории в БД", "SQL")
+
+@enduml

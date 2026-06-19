@@ -1,0 +1,50 @@
+@startuml Архитектура_АгроТех_C3_Хореография
+
+!include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
+
+title Диаграмма компонентов (C3): Вариант А (Хореография)
+
+Container(local_broker, "Локальный брокер", "RabbitMQ", "Событийная шина (AMQP)")
+ContainerDb(local_db, "Локальная БД", "PostgreSQL", "Пассивный лог событий")
+System_Ext(siren, "Сирена / Лампа", "GPIO / Реле")
+
+Container_Boundary(video_boundary, "Модуль видеоаналитики (Python)") {
+    Component(video_capture, "Video Capture", "OpenCV / RTSP", "Захват потоков с камер")
+    Component(inference_engine, "Inference Engine", "ONNX Runtime", "ИИ-аналитика (миллисекунды)")
+    Component(event_emitter, "Event Breeder", "FastStream", "Публикует 'incident.detected' и 'telemetry.livestock'")
+    
+    Rel(video_capture, inference_engine, "Кадры")
+    Rel(inference_engine, event_emitter, "Результат")
+}
+
+Container_Boundary(gateway_boundary, "Реактивный IoT Шлюз (Go / Python)") {
+    Component(event_subscriber, "Event Subscriber", "FastStream", "Слушает события 'incident.detected' и 'central.ack'")
+    Component(timeout_manager, "Timeout Manager", "In-Memory State", "Контролирует 5-секундный SLA для сирены")
+    Component(gpio_driver, "GPIO Driver", "Native Sysfs", "Прямое физическое включение сирены")
+    Component(modbus_mqtt_driver, "Hardware Drivers", "Modbus-TCP / MQTT", "Управление кормушками и поилками по расписанию событий")
+    Component(sensor_polling, "Sensor Polling", "MQTT Loop", "Сбор телеметрии, отправка 'telemetry.received'")
+    
+    Rel(event_subscriber, timeout_manager, "Передает события инцидентов/ACK")
+    Rel(timeout_manager, gpio_driver, "Триггерит при таймауте")
+    Rel(event_subscriber, modbus_mqtt_driver, "Команды автоматизации")
+}
+
+Container_Boundary(logger_boundary, "Сервис истории и аудита (Python)") {
+    Component(wildcard_listener, "Wildcard Listener", "FastStream", "Подписан на абсолютно все события (*.*)")
+    Component(event_marshaller, "Event Marshaller", "Pydantic", "Валидирует и приводит события к реляционному виду")
+    Component(db_writer, "DB Writer", "SQLAlchemy Async", "Асинхронная пакетная запись логов")
+    
+    Rel(wildcard_listener, event_marshaller, "Сырой JSON события")
+    Rel(event_marshaller, db_writer, "Преобразованная модель")
+}
+
+' Внешние связи компонентов с брокером и устройствами
+Rel(event_emitter, local_broker, "Публикует факты аномалий", "AMQP")
+Rel(sensor_polling, local_broker, "Публикует telemetry.received", "AMQP")
+Rel(local_broker, event_subscriber, "Доставляет incident.* и central.ack", "AMQP")
+Rel(local_broker, wildcard_listener, "Доставляет все сообщения (*.*)", "AMQP")
+
+Rel(gpio_driver, siren, "Замыкает реле", "GPIO")
+Rel(db_writer, local_db, "Пакетный Append-Only Insert", "SQL")
+
+@enduml

@@ -1,0 +1,47 @@
+@startuml Архитектура_АгроТех_C4_Решение_А
+
+title C4 Диаграмма кода: Сервис видеоаналитики
+
+interface IEventPublisher {
+    + publish_event(event: AnimalEvent): void
+}
+
+class RabbitMQPublisher {
+    - pika_connection: Connection
+    - exchange_name: String
+    + publish_event(event: AnimalEvent): void
+}
+
+IEventPublisher <|-- RabbitMQPublisher
+
+class VideoAnalyzerController {
+    - use_case: MLInferenceUseCase
+    - video_source: String
+    + start_processing(): void
+}
+
+class MLInferenceUseCase {
+    - model_wrapper: PartnerModelWrapper
+    - publisher: IEventPublisher
+    + analyze_frame(frame: Array): void
+}
+
+class PartnerModelWrapper {
+    - model_path: String
+    + predict(image: Array): ModelOutput
+}
+
+class AnimalEvent {
+    + event_id: UUID
+    + farm_id: String
+    + event_type: String
+    + confidence: Float
+    + timestamp: DateTime
+}
+
+VideoAnalyzerController --> MLInferenceUseCase
+MLInferenceUseCase --> IEventPublisher
+MLInferenceUseCase --> PartnerModelWrapper
+MLInferenceUseCase ..> AnimalEvent : создает
+
+@enduml
