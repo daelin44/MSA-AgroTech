@@ -1,0 +1,51 @@
+@startuml Архитектура_АгроТех_C3_Оркестрация
+
+!include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
+
+title Диаграмма компонентов (C3): Вариант Б (Оркестрация)
+
+Container(local_broker, "Локальный брокер", "RabbitMQ", "Асинхронная шина (AMQP)")
+ContainerDb(local_db, "Локальная БД", "PostgreSQL", "Хранилище состояния фермы")
+System_Ext(siren, "Сирена / Лампа", "GPIO / Реле")
+
+Container_Boundary(video_boundary, "Модуль видеоаналитики (Python)") {
+    Component(video_capture, "Video Capture Service", "OpenCV / RTSP", "Захватывает потоки с камер, нарезает на кадры")
+    Component(inference_engine, "Inference Engine", "ONNX Runtime", "Запускает ИИ-модели (драки, задавливание, подсчет)")
+    Component(event_publisher, "Event Publisher", "FastStream", "Формирует raw_event и отправляет в RabbitMQ")
+    
+    Rel(video_capture, inference_engine, "Передает кадры")
+    Rel(inference_engine, event_publisher, "Передает результаты детекции")
+}
+
+Container_Boundary(core_boundary, "Ядро мониторинга (Core Service / FastAPI)") {
+    Component(amqp_receiver, "AMQP Listener", "FastStream", "Принимает сырые события и метрики из RabbitMQ")
+    Component(business_logic, "Business Logic Engine", "Python Module", "Агрегирует метрики, считает поголовье, проверяет таймауты ACK")
+    Component(data_access, "Data Access Layer (DAL)", "SQLAlchemy", "Управляет транзакциями, хранит историю и алерты")
+    Component(gpio_controller, "GPIO Controller", "Python Sysfs/RPi.GPIO", "Прямое управление реле сирены при таймауте")
+    Component(command_dispatcher, "Command Dispatcher", "FastStream", "Формирует и отправляет команды управления в RabbitMQ")
+    
+    Rel(amqp_receiver, business_logic, "Передает данные на обработку")
+    Rel(business_logic, data_access, "Запрашивает/обновляет состояние")
+    Rel(business_logic, gpio_controller, "Триггерит сирену (Timeout)")
+    Rel(business_logic, command_dispatcher, "Инициирует команды кормушкам")
+}
+
+Container_Boundary(gateway_boundary, "IoT Шлюз автоматизации (Go / Python)") {
+    Component(gateway_amqp, "AMQP Command Receiver", "RabbitMQ Client", "Слушает команды от Core Service")
+    Component(protocol_translator, "Protocol Translator", "Internal Logic", "Переводит абстрактные команды в Modbus/MQTT")
+    Component(device_drivers, "Device Drivers", "Modbus-TCP / Paho-MQTT", "Прямое взаимодействие с физическим железом")
+    Component(telemetry_collector, "Telemetry Collector", "MQTT/Modbus Listener", "Опрашивает датчики и кормушки")
+    
+    Rel(gateway_amqp, protocol_translator, "Передает команду")
+    Rel(protocol_translator, device_drivers, "Вызывает драйвер")
+    Rel(telemetry_collector, gateway_amqp, "Передает сырую телеметрию для отправки вверх")
+}
+
+Rel(event_publisher, local_broker, "Публикует raw_event", "AMQP")
+Rel(local_broker, amqp_receiver, "Доставляет события и телеметрию", "AMQP")
+Rel(data_access, local_db, "CRUD операции", "SQL")
+Rel(gpio_controller, siren, "Вызывает", "GPIO")
+Rel(command_dispatcher, local_broker, "Публикует команды", "AMQP")
+Rel(local_broker, gateway_amqp, "Доставляет команды шлюзу", "AMQP")
+
+@enduml

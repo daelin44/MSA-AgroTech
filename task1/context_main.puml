@@ -1,0 +1,50 @@
+@startuml Архитектура_АгроТех_EventDriven
+!include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
+
+title Решение А: Event-Driven архитектура через существующий пайплайн данных
+
+Person(директор, "Зоотехник / Директор")
+Person(оператор, "Диспетчер")
+Person(дежурный, "Дежурный на ферме")
+
+System_Boundary(agro_platform, "Платформа 'АгроПром Х'") {
+    System_Ext(веб_портал, "Веб-портал (React)", "Отображает метрики и рекомендации")
+    System_Ext(мобильное_приложение, "Мобильное приложение (Flutter)", "Принимает пуши и отчеты")
+    System_Ext(kafka, "Apache Kafka", "Центральная шина обмена сообщениями")
+    
+    ' Существующий пайплайн данных платформы
+    System_Ext(data_lake, "Data Lake (MinIO)", "Хранилище сырых событий")
+    System_Ext(airflow, "Apache Airflow", "Оркестрация регулярных ETL-процессов")
+    System_Ext(dwh, "DWH (ClickHouse)", "Центральное хранилище структурированных данных")
+    System_Ext(erp, "ERP (1С:Агро)", "Учет поголовья, кормов и финансы")
+}
+
+System(livestock_processor, "Система мониторинга животноводства", "Реактивный движок: локальный анализ видеопотоков, расчет дозировок, генерация событий")
+
+System_Boundary(farm, "Оборудование Фермы") {
+    System_Ext(cameras, "Камеры", "Стриминг видео и локальные события")
+    System_Ext(feeders, "Кормушки/Поилки", "Исполнительные устройства разных вендоров")
+}
+
+Rel(директор, веб_портал, "Аналитика и дашборды")
+Rel(оператор, веб_портал, "Онлайн мониторинг инцидентов")
+Rel(оператор, мобильное_приложение, "Мгновенные алерты")
+
+Rel(cameras, livestock_processor, "RTSP / События аналитики", "Низкая задержка")
+Rel(livestock_processor, feeders, "Управляющие команды дозирования", "MQTT/Modbus")
+Rel(livestock_processor, дежурный, "Локальные алерты при обрыве связи", "GPIO/Локальный Wi-Fi")
+
+Rel(livestock_processor, kafka, "Публикация метрик здоровья и прогнозов корма", "Kafka Protocol")
+Rel(livestock_processor, kafka, "Публикация критического алерта (со статусом PENDING)", "Kafka Protocol")
+
+Rel(kafka, веб_портал, "Поток аномалий в реальном времени", "WebSockets / SSE")
+Rel(kafka, мобильное_приложение, "Критические Push-нотификации (до 5 сек)", "Firebase/APNS")
+Rel(kafka, livestock_processor, "Чтение ACK для закрытия статуса алерта")
+
+Rel(kafka, data_lake, "Выгрузка сырых метрик животноводства", "Kafka Connect / S3 API")
+Rel(data_lake, airflow, "Триггер / Источник для батчей")
+Rel(airflow, dwh, "Трансформация и очистка данных", "ETL")
+Rel(dwh, erp, "Регулярная синхронизация поголовья и остатков корма", "ETL / Airflow DAG")
+Rel(erp, dwh, "Обогащение бизнес-метриками", "ETL")
+
+@enduml

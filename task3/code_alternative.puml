@@ -1,0 +1,56 @@
+@startuml Архитектура_АгроТех_C4_Оркестрация_Код
+
+title Диаграмма кода (C4): Вариант Б — Архитектура классов Core Service
+
+package "Core Service (Business Logic Architecture)" {
+
+    class IncidentService {
+        - dal: DataAccessLayer
+        - dispatcher: CommandDispatcher
+        - gpio: GPIOController
+        + handle_raw_event(event: RawEvent): void
+        + process_ack_timeout(incident_id: string): void
+    }
+
+    class TelemetryService {
+        - dal: DataAccessLayer
+        + handle_hardware_metrics(metrics: HardwareMetrics): void
+        + forecast_feed_consumption(): FeedForecast
+        + recount_livestock(): int
+    }
+
+    class DataAccessLayer {
+        - session_maker: sessionmaker
+        + save_incident(incident: IncidentModel): void
+        + update_incident_status(id: string, status: string): void
+        + save_metrics(metrics: MetricsModel): void
+        + get_active_incidents(): List[IncidentModel]
+    }
+
+    class CommandDispatcher {
+        - amqp_client: FastStreamClient
+        + send_feeding_command(feeder_id: string, amount: float): void
+        + send_central_alert(incident: IncidentModel): void
+    }
+
+    class GPIOController {
+        - pin_number: int
+        + turn_on_siren(): void
+        + turn_off_siren(): void
+    }
+    
+    note left of IncidentService::process_ack_timeout
+        Реализация жесткой логики оркестрации:
+        Если в течение 5 секунд нет ACK от 
+        мобильного приложения, оркестратор 
+        явно вызывает gpio.turn_on_siren()
+    end note
+
+    IncidentService --> DataAccessLayer : использует для изменения состояния
+    IncidentService --> CommandDispatcher : отправляет команды
+    IncidentService --> GPIOController : управляет сиреной напрямую
+    
+    TelemetryService --> DataAccessLayer : пишет логи кормления/метрик
+}
+
+@enduml

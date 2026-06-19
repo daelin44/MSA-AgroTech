@@ -1,0 +1,47 @@
+@startuml Архитектура_АгроТех_C4_Хореография_Код
+
+title Диаграмма кода (C4): Вариант Б — Классы Реактивного IoT Шлюза
+
+package "IoT Gateway (Reactive Internal Architecture)" {
+
+    class IncidentEventListener {
+        - timeout_manager: TimeoutManager
+        - automation_controller: AutomationController
+        + on_incident_detected(msg: IncidentDetectedEvent): void
+        + on_central_ack_received(msg: CentralAckEvent): void
+    }
+
+    class TimeoutManager {
+        - active_timers: Map<string, Timer>
+        - gpio: GPIODriver
+        + start_ack_countdown(incident_id: string, delay_seconds: int): void
+        + cancel_countdown(incident_id: string): void
+        - fire_local_siren(): void
+    }
+
+    class AutomationController {
+        - modbus_client: ModbusClient
+        - mqtt_client: PahoClient
+        + apply_feeding_schedule(schedule_id: string): void
+        + adjust_water_filtration(filter_id: string, mode: string): void
+    }
+
+    class GPIODriver {
+        - pin: int
+        + write_high(): void
+        + write_low(): void
+    }
+
+    note right of TimeoutManager::start_ack_countdown
+        Локальный guard-таймер:
+        Если за 5 секунд от IncidentEventListener 
+        не вызовется cancel_countdown(), 
+        автономно сработает fire_local_siren()
+    end note
+
+    IncidentEventListener --> TimeoutManager : управляет жизненным циклом таймеров тревоги
+    IncidentEventListener --> AutomationController : триггерит сценарии для кормушек
+    TimeoutManager --> GPIODriver : физически включает сирену в обход сети
+}
+
+@enduml

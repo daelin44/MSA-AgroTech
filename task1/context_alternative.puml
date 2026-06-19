@@ -1,0 +1,36 @@
+@startuml Архитектура_АгроТех_Решение_А
+
+!include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
+
+title Решение B: API-First интеграция с платформой "АгроПром Х"
+
+Person(директор, "Зоотехник / Директор")
+Person(оператор, "Диспетчер")
+Person(дежурный, "Дежурный на ферме")
+
+System_Boundary(agro_platform, "Платформа 'АгроПром Х'") {
+    System_Ext(веб_портал, "Веб-портал (React)")
+    System_Ext(мобильное_приложение, "Мобильное приложение (Flutter)")
+    System_Ext(kafka, "Apache Kafka", "Центральная шина")
+    System_Ext(erp, "ERP (1С:Агро)")
+}
+
+System(livestock_system, "Система мониторинга животноводства", "Централизованный сбор метрик, агрегация данных с ферм, API для UI")
+
+System_Boundary(farm, "Оборудование Фермы") {
+    System_Ext(cameras, "Камеры")
+    System_Ext(feeders, "Кормушки/Поилки")
+}
+
+Rel(директор, веб_портал, "Аналитика и дашборды")
+Rel(оператор, веб_портал, "Онлайн мониторинг")
+Rel(оператор, мобильное_приложение, "Алерты")
+Rel(веб_портал, livestock_system, "REST/GraphQL", "API метрик")
+Rel(мобильное_приложение, livestock_system, "REST/WebSocket", "API и алерты")
+Rel(cameras, livestock_system, "RTSP/События")
+Rel(livestock_system, feeders, "Управляющие команды")
+Rel(livestock_system, дежурный, "Локальные алерты (Оффлайн)")
+Rel(livestock_system, kafka, "События и метрики", "Kafka Protocol")
+Rel(livestock_system, erp, "Прогнозы и поголовье", "REST")
+
+@enduml
