@@ -20,9 +20,11 @@ System_Boundary(livestock_system_boundary, "Система мониторинг�
     
     Container(platform_bridge, "Мост синхронизации (Bridge)", "Python (FastStream)", "Слушает локальные события, транслирует их в центральную Kafka. Отслеживает центральный ACK")
     
-    Container(history_logger, "Сервис истории и аудита", "Python (SQLAlchemy)", "Пассивный подписчик на абсолютно все локальные события. Записывает их в лог для локального анализа")
+    Container(history_logger, "Сервис истории и конфигурации", "Python (SQLAlchemy)", "Подписчик на события. Записывает аудит-лог в БД. Предоставляет API для локального UI и хранит настройки устройств")
     
-    ContainerDb(local_db, "Локальная БД", "PostgreSQL", "Локальный лог инцидентов, телеметрии и настроек устройств")
+    ContainerDb(local_db, "Локальная БД инцидентов", "PostgreSQL", "Хранение истории аномалий, конфигураций оборудования, локальных учетных записей и маппинга датчиков")
+    
+    Container(local_mqtt, "Локальный MQTT брокер", "Mosquitto", "Технологическая шина для сбора телеметрии с датчиков и отправки низкоуровневых команд")
 }
 
 System_Boundary(farm_hardware, "Оборудование Фермы") {
@@ -31,26 +33,31 @@ System_Boundary(farm_hardware, "Оборудование Фермы") {
     System_Ext(siren, "Локальная сирена/лампа", "GPIO / Реле")
 }
 
-Rel(оператор, мобильное_приложение, "Получает уведомления")
-Rel(kafka, мобильное_приложение, "Push нотификации")
+Rel(оператор, мобильное_приложение, "Мониторит инциденты", "HTTPS")
+Rel(kafka, мобильное_приложение, "Доставка Push-уведомлений", "Firebase/APNS")
 
-Rel(cameras, video_analyzer, "Передача видеопотока", "RTSP")
-Rel(video_analyzer, local_broker, "Публикация факта: 'incident.detected'", "AMQP")
-Rel(video_analyzer, local_broker, "Публикация метрик", "AMQP")
+Rel(дежурный, local_web_ui, "Просмотр состояния и сброс алертов", "HTTP / Браузер")
+Rel(local_web_ui, history_logger, "Запрос логов и изменение настроек", "REST API")
 
-Rel(feeders, iot_gateway, "Телеметрия расхода корма/воды", "MQTT / Modbus")
-Rel(iot_gateway, local_broker, "Публикация факта: 'telemetry.received'", "AMQP")
+Rel(cameras, video_analyzer, "Стриминг видео", "RTSP")
+Rel(feeders, local_mqtt, "Публикация телеметрии расхода корма", "MQTT (telemetry/feeders)")
+Rel(local_mqtt, iot_gateway, "Чтение агрегированных метрик", "MQTT")
+
+Rel(video_analyzer, local_broker, "Публикация: incident.detected", "AMQP (Exchange: amq.topic, RK: incident.detected)")
+Rel(video_analyzer, local_broker, "Публикация метрик здоровья", "AMQP (Exchange: amq.topic, RK: telemetry.video)")
+
 Rel(local_broker, iot_gateway, "Подписка на 'incident.detected' и 'central.ack_timeout'", "AMQP")
-Rel(iot_gateway, feeders, "Управление дозированием (по расписанию из события)", "Modbus TCP")
-Rel(iot_gateway, siren, "Включение сирены при получении 'incident.detected' по истечении таймаута, если не получил 'central.ack'", "GPIO / Реле")
+Rel(iot_gateway, local_broker, "Публикация: telemetry.received (транзит метрик)", "AMQP (RK: telemetry.received)")
+Rel(iot_gateway, local_mqtt, "Команды дозирования (по событию/расписанию)", "MQTT (commands/feeders)")
+Rel(local_mqtt, feeders, "Исполнение команд", "Modbus TCP / MQTT")
+Rel(iot_gateway, siren, "Аварийное включение при отсутствии центрального ACK", "GPIO / Вызов реле")
 
 Rel(local_broker, platform_bridge, "Подписка на 'incident.detected' и 'telemetry.received'", "AMQP")
-Rel(platform_bridge, kafka, "Транзит событий в центр (со статусом PENDING)", "Kafka Protocol (TLS)")
-Rel(kafka, platform_bridge, "Чтение входящих ACK-сообщений от Flutter", "Kafka Protocol")
+Rel(platform_bridge, kafka, "Транзит событий в центр (Статус: PENDING)", "Kafka Protocol (TLS)")
+Rel(kafka, platform_bridge, "Чтение входящих ACK от диспетчера", "Kafka Protocol")
+Rel(platform_bridge, local_broker, "Публикация: central.ack", "AMQP (Exchange: amq.topic, RK: central.ack)")
 
-Rel(platform_bridge, local_broker, "Публикация факта: 'central.ack'", "AMQP")
-
-Rel(local_broker, history_logger, "Подписка на все события (*.*)", "AMQP")
-Rel(history_logger, local_db, "Запись истории в БД", "SQL")
+Rel(local_broker, history_logger, "Подписка на абсолютно все события", "AMQP (Routing Key: #)")
+Rel(history_logger, local_db, "Запись аудит-лога и чтение конфигураций", "SQL (SQLAlchemy)")
 
 @enduml

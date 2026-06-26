@@ -2,26 +2,37 @@
 
 !include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
 
-title Контейнерная диаграмма (C2): Вариант Б
+title Контейнерная диаграмма (C2): Вариант А
 
+Person(директор, "Зоотехник / Директор")
+Person(оператор, "Диспетчер")
 Person(дежурный, "Дежурный на ферме")
 
-System_Ext(kafka, "Apache Kafka", "Центральная шина платформы 'АгроПром Х'")
-System_Ext(мобильное_приложение, "Мобильное приложение", "Flutter")
+System_Boundary(agro_platform, "Платформа 'АгроПром Х'") {
+    Container(веб_портал, "Веб-портал", "React", "Панель администрирования, аналитика и дашборды")
+    Container(мобильное_приложение, "Мобильное приложение", "Flutter", "Оперативные алерты, мобильное рабочее место")
+    System_Ext(kafka, "Apache Kafka", "Центральная шина платформы")
+    System_Ext(erp, "ERP (1С:Агро)", "Учет поголовья, кормов и финансов")
+}
 
-System_Boundary(livestock_system_boundary, "Система мониторинга животноводства (Edge Cluster)") {
+System_Boundary(livestock_system_boundary, "Система мониторинга животноводства (Cloud/Center)") {
     
-    Container(local_broker, "Локальный брокер сообщений", "RabbitMQ", "Обеспечивает внутренний асинхронный pub/sub и интеграцию с IoT по MQTT")
+    Container(api_gateway, "API Gateway", "Envoy / Traefik", "Единая точка входа. Аутентификация, маршрутизация, Rate Limiting")
     
-    Container(video_analyzer, "Модуль видеоаналитики", "Python (ONNX Runtime / FastStream)", "Захват RTSP, инференс ИИ моделей, генерация сырых событий аномалий")
+    Container(core_service, "Центральный сервис (Core API)", "Go / Python", "Бизнес-логика, управление расписаниями кормления, оркестрация инцидентов. Предоставляет REST/gRPC API")
     
-    Container(livestock_core, "Ядро мониторинга (Core Service)", "Python (FastAPI / SQLAlchemy)", "Бизнес-логика, ведение локального учета, агрегация метрик, оркестрация Ack Loop")
+    Container(notification_service, "Сервис уведомлений", "Node.js / Go", "Управляет Push-нотификациями и WebSockets соединениями для UI")
     
-    ContainerDb(local_db, "Локальная БД", "PostgreSQL", "Хранение временного состояния, буферизация алертов и метрик для синхронизации")
+    Container(integration_service, "Сервис интеграции (Bridge)", "Python", "Асинхронный адаптер для обмена данными с 1С и внешней Kafka")
     
-    Container(iot_gateway, "IoT Шлюз автоматизации", "Python / Go", "Драйверы оборудования. Двунаправленный обмен: команды и сбор телеметрии (Modbus TCP / MQTT)")
+    ContainerDb(central_db, "Центральная БД", "PostgreSQL (TimescaleDB)", "Хранение долгосрочной телеметрии, профилей животных, настроек и логов")
+}
+
+System_Boundary(farm_edge, "Контур Фермы (Edge)") {
     
-    Container(platform_bridge, "Мост синхронизации (Bridge)", "Python (FastStream)", "Асинхронный коннектор между локальным RabbitMQ и центральной Kafka. Управляет оффлайн-буфером")
+    Container(iot_smart_agent, "Умный Edge-Агент", "C++ / Go / Python", "Легковесный демон на ферме. Буферизирует видеопоток, локально гоняет ONNX-модели. Отправляет агрегированные данные по gRPC в облако. При потере связи удерживает базовую автоматику")
+    
+    Container(local_mqtt, "Локальный MQTT Брокер", "Mosquitto", "Легковесная шина только для сбора метрик с датчиков и отправки команд на кормушки")
 }
 
 System_Boundary(farm_hardware, "Оборудование Фермы") {
@@ -30,26 +41,31 @@ System_Boundary(farm_hardware, "Оборудование Фермы") {
     System_Ext(siren, "Локальная сирена/лампа", "GPIO / Реле")
 }
 
-Rel(дежурный, мобильное_приложение, "Получает уведомления")
-Rel(kafka, мобильное_приложение, "Push нотификации")
+Rel(директор, веб_портал, "Использует", "HTTPS")
+Rel(оператор, веб_портал, "Мониторит", "HTTPS")
+Rel(оператор, мобильное_приложение, "Получает пуши", "Firebase/APNS")
 
-Rel(cameras, video_analyzer, "Передача видеопотока", "RTSP")
-Rel(video_analyzer, local_broker, "Публикация событий детекции (raw_event)", "AMQP")
+Rel(веб_портал, api_gateway, "Запросы метрик и дашбордов", "HTTPS / REST")
+Rel(мобильное_приложение, api_gateway, "Управление и просмотр алертов", "HTTPS / REST")
+Rel(api_gateway, notification_service, "Подключение для real-time обновлений", "WebSockets")
 
-Rel(feeders, iot_gateway, "Отправка телеметрии, веса животных и расхода корма/воды", "MQTT / Modbus TCP")
-Rel(iot_gateway, local_broker, "Публикация сырых метрик оборудования (hardware_metrics)", "AMQP")
+Rel(api_gateway, core_service, "Маршрутизация запросов", "gRPC")
+Rel(core_service, central_db, "Чтение/Запись данных", "SQL")
+Rel(core_service, notification_service, "Триггер алертов для отправки пользователям", "внутренний REST")
 
-Rel(local_broker, livestock_core, "Подписка на события детекции и метрики оборудования", "AMQP")
-Rel(livestock_core, local_db, "Чтение/Запись состояния, логов кормления и алертов", "SQL / SQLAlchemy")
+Rel(core_service, integration_service, "Передача данных для внешних систем", "gRPC")
+Rel(integration_service, kafka, "Экспорт событий", "Kafka Protocol")
+Rel(integration_service, erp, "Синхронизация данных (Поголовье/Прогнозы)", "REST API (1С)")
 
-Rel(livestock_core, local_broker, "Команды кормления / Команды алертинга", "AMQP")
-Rel(local_broker, iot_gateway, "Маршрутизация команд управления", "AMQP")
-Rel(iot_gateway, feeders, "Управляющие команды дозирования", "Modbus TCP / MQTT")
-Rel(livestock_core, siren, "Прямое физическое переключение при таймауте ACK", "GPIO / dry contact")
+Rel(iot_smart_agent, api_gateway, "Стриминг телеметрии и фактов аномалий", "gRPC / HTTP/2")
+Rel(core_service, iot_smart_agent, "Синхронная отправка управляющих команд", "gRPC (Обратный канал / Long-Lived Stream)")
 
-Rel(local_broker, platform_bridge, "Обмен метриками, телеметрией устройств и алертами", "AMQP")
-Rel(platform_bridge, kafka, "Публикация алертов (PENDING), метрик здоровья и телеметрии оборудования", "Kafka Protocol (TLS)")
-Rel(kafka, platform_bridge, "Чтение входящих ACK-сообщений", "Kafka Protocol")
-Rel(platform_bridge, local_broker, "Проброс ACK в Core Service", "AMQP")
+Rel(cameras, iot_smart_agent, "Передача видеопотока", "RTSP")
+Rel(feeders, local_mqtt, "Публикация телеметрии", "MQTT")
+Rel(local_mqtt, iot_smart_agent, "Сбор данных с датчиков", "MQTT")
+Rel(iot_smart_agent, local_mqtt, "Публикация команд управления", "MQTT")
+Rel(local_mqtt, feeders, "Исполнение команд дозирования", "MQTT / Modbus")
+Rel(iot_smart_agent, siren, "Прямое включение при критическом оффлайн-сбое", "GPIO / Реле")
+Rel(iot_smart_agent, дежурный, "Свето-звуковое оповещение на месте", "Физический сигнал")
 
 @enduml

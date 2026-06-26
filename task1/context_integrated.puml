@@ -2,7 +2,7 @@
 
 !include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
 
-title Решение B: API-First интеграция с платформой "АгроПром Х"
+title Решение А: API-First интеграция с платформой "АгроПром Х"
 
 Person(директор, "Зоотехник / Директор")
 Person(оператор, "Диспетчер")
@@ -25,12 +25,12 @@ System_Boundary(farm, "Оборудование Фермы") {
 Rel(директор, веб_портал, "Аналитика и дашборды")
 Rel(оператор, веб_портал, "Онлайн мониторинг")
 Rel(оператор, мобильное_приложение, "Алерты")
-Rel(веб_портал, livestock_system, "REST/GraphQL", "API метрик")
-Rel(мобильное_приложение, livestock_system, "REST/WebSocket", "API и алерты")
+Rel(веб_портал, livestock_system, "Метрики")
+Rel(мобильное_приложение, livestock_system, "API и алерты")
 Rel(cameras, livestock_system, "RTSP/События")
 Rel(livestock_system, feeders, "Управляющие команды")
 Rel(livestock_system, дежурный, "Локальные алерты (Оффлайн)")
 Rel(livestock_system, kafka, "События и метрики", "Kafka Protocol")
-Rel(livestock_system, erp, "Прогнозы и поголовье", "REST")
+Rel(livestock_system, erp, "Прогнозы и поголовье")
 
 @enduml

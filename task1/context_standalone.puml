@@ -1,0 +1,46 @@
+@startuml Архитектура_АгроТех_Решение_Б
+
+!include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
+
+title Решение Б: Standalone платформа (Независимый продукт)
+
+Person(директор, "Зоотехник / Директор")
+Person(оператор, "Диспетчер")
+Person(дежурный, "Дежурный на ферме")
+
+System_Boundary(agro_platform, "Платформа 'АгроПром Х'") {
+    System_Ext(веб_портал_old, "Старый Веб-портал")
+    System_Ext(kafka, "Apache Kafka")
+    System_Ext(erp, "ERP (1С:Агро)")
+}
+
+System_Boundary(new_product, "Продукт: Умная Ферма") {
+    System(livestock_portal, "Livestock Web Portal", "Новый UI для зоотехников")
+    System(livestock_mobile, "Livestock Mobile App", "Новое приложение для диспетчеров")
+    System(livestock_system, "Ядро системы мониторинга", "Edge-аналитика и обработка данных")
+}
+
+System_Boundary(farm, "Оборудование Фермы") {
+    System_Ext(cameras, "Камеры")
+    System_Ext(feeders, "Кормушки/Поилки")
+}
+
+' Пользователи идут в НОВЫЕ интерфейсы
+Rel(директор, livestock_portal, "Использует")
+Rel(оператор, livestock_mobile, "Использует")
+Rel(оператор, livestock_portal, "Использует")
+
+' Взаимодействие внутри нового продукта
+Rel(livestock_portal, livestock_system, "API")
+Rel(livestock_mobile, livestock_system, "API")
+
+' Взаимодействие с оборудованием
+Rel(cameras, livestock_system, "RTSP/События")
+Rel(livestock_system, feeders, "Управляющие команды")
+Rel(livestock_system, дежурный, "Локальные алерты")
+
+' Фоновая интеграция с корпоративной платформой
+Rel(livestock_system, kafka, "Экспорт сырых метрик")
+Rel(livestock_system, erp, "Экспорт финансовых показателей")
+
+@enduml

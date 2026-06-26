@@ -1,51 +1,54 @@
-@startuml Архитектура_АгроТех_C3_Оркестрация
+@startuml Архитектура_АгроТех_C3_API_First_gRPC
 
 !include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
 
-title Диаграмма компонентов (C3): Вариант Б (Оркестрация)
+title Диаграмма компонентов (C3): Вариант А - API-First (gRPC + Облако)
 
-Container(local_broker, "Локальный брокер", "RabbitMQ", "Асинхронная шина (AMQP)")
-ContainerDb(local_db, "Локальная БД", "PostgreSQL", "Хранилище состояния фермы")
-System_Ext(siren, "Сирена / Лампа", "GPIO / Реле")
+Container(api_gateway, "API Gateway", "Envoy / Traefik", "Единая точка входа в Облако")
+Container(local_mqtt, "Локальный MQTT брокер", "Mosquitto", "Шина датчиков на ферме")
+System_Ext(siren, "Сирена", "GPIO")
+System_Ext(cameras, "Камеры", "RTSP")
 
-Container_Boundary(video_boundary, "Модуль видеоаналитики (Python)") {
-    Component(video_capture, "Video Capture Service", "OpenCV / RTSP", "Захватывает потоки с камер, нарезает на кадры")
-    Component(inference_engine, "Inference Engine", "ONNX Runtime", "Запускает ИИ-модели (драки, задавливание, подсчет)")
-    Component(event_publisher, "Event Publisher", "FastStream", "Формирует raw_event и отправляет в RabbitMQ")
+Container_Boundary(agent_boundary, "Умный Edge-Агент (Go / C++)") {
+    Component(edge_capture, "Video Streamer", "OpenCV / ONNX", "Локальный захват RTSP и инференс моделей")
+    Component(mqtt_bridge, "MQTT Client Loop", "paho.mqtt", "Сбор локальных метрик с Mosquitto и отправка команд назад")
+    Component(grpc_client, "gRPC Stream Client", "grpc-go", "Поддерживает Long-Lived Bidirectional Stream с Облаком")
+    Component(fifo_manager, "Offline FIFO Buffer", "SQLite / Local Files", "Буферизирует телеметрию на диск при обрыве сети. Вытесняет старое по лимиту")
+    Component(fallback_engine, "Fallback Logic", "In-Memory Cron", "Автономно управляет кормушками по жесткому расписанию, если Облако недоступно")
     
-    Rel(video_capture, inference_engine, "Передает кадры")
-    Rel(inference_engine, event_publisher, "Передает результаты детекции")
+    Rel(edge_capture, grpc_client, "Отправка incident.detected (при наличии сети)")
+    Rel(edge_capture, fifo_manager, "Запись инцидента на диск (если оффлайн)")
+    Rel(mqtt_bridge, grpc_client, "Стриминг телеметрии")
+    Rel(grpc_client, fifo_manager, "Репликация накопленного буфера при восстановлении сети")
+    Rel(grpc_client, mqtt_bridge, "Транзит входящих команд из Облака")
+    Rel(fifo_manager, fallback_engine, "Сигнал о переходе в автономный режим")
+    Rel(fallback_engine, mqtt_bridge, "Резервные локальные команды")
 }
 
-Container_Boundary(core_boundary, "Ядро мониторинга (Core Service / FastAPI)") {
-    Component(amqp_receiver, "AMQP Listener", "FastStream", "Принимает сырые события и метрики из RabbitMQ")
-    Component(business_logic, "Business Logic Engine", "Python Module", "Агрегирует метрики, считает поголовье, проверяет таймауты ACK")
-    Component(data_access, "Data Access Layer (DAL)", "SQLAlchemy", "Управляет транзакциями, хранит историю и алерты")
-    Component(gpio_controller, "GPIO Controller", "Python Sysfs/RPi.GPIO", "Прямое управление реле сирены при таймауте")
-    Component(command_dispatcher, "Command Dispatcher", "FastStream", "Формирует и отправляет команды управления в RabbitMQ")
+Container_Boundary(core_boundary, "Центральный сервис Облака (Core API на Go)") {
+    Component(grpc_server, "gRPC Server Handler", "grpc-go", "Принимает соединения от сотен Edge-агентов с ферм")
+    Component(incident_orchestrator, "Incident Orchestrator", "Go Domain Logic", "Проверяет правила, обогащает данные, принимает решение о включении сирен")
+    Component(telemetry_processor, "Telemetry Processor", "Go Channels", "Агрегирует временные ряды для TimescaleDB")
+    Component(config_service, "Config Registry", "Go REST/gRPC", "Хранит и распространяет прошивки, настройки устройств и веса моделей")
+    Component(db_client, "Database Client", "pgx / SQLx", "Высокопроизводительное подключение к СУБД")
     
-    Rel(amqp_receiver, business_logic, "Передает данные на обработку")
-    Rel(business_logic, data_access, "Запрашивает/обновляет состояние")
-    Rel(business_logic, gpio_controller, "Триггерит сирену (Timeout)")
-    Rel(business_logic, command_dispatcher, "Инициирует команды кормушкам")
+    Rel(grpc_server, incident_orchestrator, "Поток инцидентов ферм")
+    Rel(grpc_server, telemetry_processor, "Поток метрик")
+    Rel(incident_orchestrator, db_client, "Мутация состояния инцидента")
+    Rel(telemetry_processor, db_client, "Пакетный Bulk Insert метрик")
+    Rel(config_service, db_client, "Чтение настроек")
+    Rel(incident_orchestrator, grpc_server, "Отправка команды 'Включить сирену' в обратный gRPC-канал")
 }
 
-Container_Boundary(gateway_boundary, "IoT Шлюз автоматизации (Go / Python)") {
-    Component(gateway_amqp, "AMQP Command Receiver", "RabbitMQ Client", "Слушает команды от Core Service")
-    Component(protocol_translator, "Protocol Translator", "Internal Logic", "Переводит абстрактные команды в Modbus/MQTT")
-    Component(device_drivers, "Device Drivers", "Modbus-TCP / Paho-MQTT", "Прямое взаимодействие с физическим железом")
-    Component(telemetry_collector, "Telemetry Collector", "MQTT/Modbus Listener", "Опрашивает датчики и кормушки")
-    
-    Rel(gateway_amqp, protocol_translator, "Передает команду")
-    Rel(protocol_translator, device_drivers, "Вызывает драйвер")
-    Rel(telemetry_collector, gateway_amqp, "Передает сырую телеметрию для отправки вверх")
-}
+ContainerDb(central_db, "Центральная БД", "PostgreSQL (TimescaleDB)", "Глобальное хранилище всей системы")
 
-Rel(event_publisher, local_broker, "Публикует raw_event", "AMQP")
-Rel(local_broker, amqp_receiver, "Доставляет события и телеметрию", "AMQP")
-Rel(data_access, local_db, "CRUD операции", "SQL")
-Rel(gpio_controller, siren, "Вызывает", "GPIO")
-Rel(command_dispatcher, local_broker, "Публикует команды", "AMQP")
-Rel(local_broker, gateway_amqp, "Доставляет команды шлюзу", "AMQP")
+Rel(cameras, edge_capture, "Видеопоток", "RTSP")
+Rel(mqtt_bridge, local_mqtt, "Обмен данными с железом", "MQTT")
+Rel(edge_capture, siren, "Аварийный триггер", "GPIO")
+
+Rel(grpc_client, api_gateway, "Установление сессии и стриминг", "gRPC / HTTP/2 (TLS)")
+Rel(api_gateway, grpc_server, "Маршрутизация gRPC трафика", "gRPC")
+
+Rel(db_client, central_db, "Пул соединений", "SQL")
 
 @enduml

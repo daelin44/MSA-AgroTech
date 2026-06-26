@@ -4,47 +4,68 @@
 
 title Диаграмма компонентов (C3): Вариант А (Хореография)
 
-Container(local_broker, "Локальный брокер", "RabbitMQ", "Событийная шина (AMQP)")
-ContainerDb(local_db, "Локальная БД", "PostgreSQL", "Пассивный лог событий")
+Container(local_broker, "Локальный брокер", "RabbitMQ", "Событийная шина (AMQP Topic Exchange)")
+Container(local_mqtt, "Локальный MQTT брокер", "Mosquitto", "Технологическая шина для датчиков и исполнительных механизмов")
+ContainerDb(local_db, "Локальная БД", "PostgreSQL", "Реляционная база (Логи + Конфигурации)")
+Person(дежурный, "Дежурный на ферме")
 System_Ext(siren, "Сирена / Лампа", "GPIO / Реле")
+System_Ext(feeders, "Кормушки/Поилки", "Modbus / MQTT")
 
 Container_Boundary(video_boundary, "Модуль видеоаналитики (Python)") {
     Component(video_capture, "Video Capture", "OpenCV / RTSP", "Захват потоков с камер")
-    Component(inference_engine, "Inference Engine", "ONNX Runtime", "ИИ-аналитика (миллисекунды)")
-    Component(event_emitter, "Event Breeder", "FastStream", "Публикует 'incident.detected' и 'telemetry.livestock'")
+    Component(inference_engine, "Inference Engine", "ONNX Runtime", "ИИ-аналитика поведения животных")
+    Component(event_emitter, "Event Breeder", "FastStream", "Публикует 'incident.detected' и 'telemetry.video'")
     
     Rel(video_capture, inference_engine, "Кадры")
     Rel(inference_engine, event_emitter, "Результат")
 }
 
-Container_Boundary(gateway_boundary, "Реактивный IoT Шлюз (Go / Python)") {
-    Component(event_subscriber, "Event Subscriber", "FastStream", "Слушает события 'incident.detected' и 'central.ack'")
+Container_Boundary(gateway_boundary, "Реактивный IoT Шлюз (Go)") {
+    Component(amqp_subscriber, "AMQP Subscriber", "amqp091", "Слушает 'incident.detected' и 'central.ack'")
     Component(timeout_manager, "Timeout Manager", "In-Memory State", "Контролирует 5-секундный SLA для сирены")
     Component(gpio_driver, "GPIO Driver", "Native Sysfs", "Прямое физическое включение сирены")
-    Component(modbus_mqtt_driver, "Hardware Drivers", "Modbus-TCP / MQTT", "Управление кормушками и поилками по расписанию событий")
-    Component(sensor_polling, "Sensor Polling", "MQTT Loop", "Сбор телеметрии, отправка 'telemetry.received'")
+    Component(mqtt_publisher, "MQTT Command Publisher", "paho.mqtt", "Публикует команды автоматизации в Mosquitto")
+    Component(mqtt_subscriber, "MQTT Telemetry Subscriber", "paho.mqtt", "Собирает сырую телеметрию с Mosquitto, агрегирует и шлет в RabbitMQ")
     
-    Rel(event_subscriber, timeout_manager, "Передает события инцидентов/ACK")
+    Rel(amqp_subscriber, timeout_manager, "События инцидентов/ACK")
     Rel(timeout_manager, gpio_driver, "Триггерит при таймауте")
-    Rel(event_subscriber, modbus_mqtt_driver, "Команды автоматизации")
+    Rel(amqp_subscriber, mqtt_publisher, "Команды автоматизации")
 }
 
-Container_Boundary(logger_boundary, "Сервис истории и аудита (Python)") {
-    Component(wildcard_listener, "Wildcard Listener", "FastStream", "Подписан на абсолютно все события (*.*)")
-    Component(event_marshaller, "Event Marshaller", "Pydantic", "Валидирует и приводит события к реляционному виду")
-    Component(db_writer, "DB Writer", "SQLAlchemy Async", "Асинхронная пакетная запись логов")
+Container_Boundary(ui_boundary, "Локальный Веб-портал (Nginx + FastAPI)") {
+    Component(static_server, "Web Server", "Nginx", "Раздает SPA-фронтенд для дежурного")
+    Component(ui_api, "UI API Gateway", "FastAPI", "Проксирует запросы, проверяет локальные права доступа")
     
-    Rel(wildcard_listener, event_marshaller, "Сырой JSON события")
-    Rel(event_marshaller, db_writer, "Преобразованная модель")
+    Rel(static_server, ui_api, "XHR/Fetch запросы")
 }
 
-' Внешние связи компонентов с брокером и устройствами
-Rel(event_emitter, local_broker, "Публикует факты аномалий", "AMQP")
-Rel(sensor_polling, local_broker, "Публикует telemetry.received", "AMQP")
-Rel(local_broker, event_subscriber, "Доставляет incident.* и central.ack", "AMQP")
+Container_Boundary(logger_boundary, "Сервис истории и конфигурации (Python)") {
+    Component(wildcard_listener, "Wildcard Listener", "FastStream", "Подписан на все события (*.*) для аудита")
+    Component(event_marshaller, "Event Marshaller", "Pydantic", "Валидирует и сериализует логи")
+    Component(config_manager, "Config Manager", "FastAPI Сервис", "Предоставляет REST API для чтения настроек датчиков и порогов ИИ")
+    Component(db_writer, "DB Access Layer", "SQLAlchemy Async", "Асинхронная запись логов и чтение конфигураций")
+    
+    Rel(wildcard_listener, event_marshaller, "Сырой JSON")
+    Rel(event_marshaller, db_writer, "Пакетный Append")
+    Rel(config_manager, db_writer, "CRUD операции")
+}
+
+' Связи пользователей
+Rel(дежурный, static_server, "Взаимодействие", "HTTP / Браузер")
+Rel(ui_api, config_manager, "Запрос логов / Обновление настроек устройств", "REST / HTTP")
+
+' Связи с брокерами и железом
+Rel(event_emitter, local_broker, "Публикует аномалии", "AMQP (RK: incident.detected)")
+Rel(mqtt_subscriber, local_broker, "Публикует telemetry.received", "AMQP (RK: telemetry.received)")
+Rel(local_broker, amqp_subscriber, "Доставляет события", "AMQP")
 Rel(local_broker, wildcard_listener, "Доставляет все сообщения (*.*)", "AMQP")
 
+Rel(feeders, local_mqtt, "Сырые метрики расхода", "MQTT (telemetry/feeders)")
+Rel(local_mqtt, mqtt_subscriber, "Подписка на метрики", "MQTT")
+Rel(mqtt_publisher, local_mqtt, "Публикация команд дозирования", "MQTT (commands/feeders)")
+Rel(local_mqtt, feeders, "Доставка команд", "MQTT / Modbus")
+
 Rel(gpio_driver, siren, "Замыкает реле", "GPIO")
-Rel(db_writer, local_db, "Пакетный Append-Only Insert", "SQL")
+Rel(db_writer, local_db, "Чтение/Запись", "SQL")
 
 @enduml

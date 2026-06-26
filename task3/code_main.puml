@@ -1,14 +1,14 @@
-@startuml Архитектура_АгроТех_C4_Хореография_Код
+@startuml Архитектура_АгроТех_C4_Хореография_Generic_Код
 
-title Диаграмма кода (C4): Вариант Б — Классы Реактивного IoT Шлюза
+title Диаграмма кода (C4): Вариант Б — Компоненты IoT Шлюза (Общие типы)
 
-package "IoT Gateway (Reactive Internal Architecture)" {
+package "IoT Gateway Internal Architecture" {
 
     class IncidentEventListener {
-        - timeout_manager: TimeoutManager
-        - automation_controller: AutomationController
-        + on_incident_detected(msg: IncidentDetectedEvent): void
-        + on_central_ack_received(msg: CentralAckEvent): void
+        - timeoutManager: TimeoutManager
+        - commandPublisher: CommandPublisher
+        + onIncidentDetected(event: IncidentEvent): void
+        + onCentralAckReceived(event: AckEvent): void
     }
 
     class TimeoutManager {
@@ -19,11 +19,16 @@ package "IoT Gateway (Reactive Internal Architecture)" {
         - fire_local_siren(): void
     }
 
-    class AutomationController {
-        - modbus_client: ModbusClient
-        - mqtt_client: PahoClient
-        + apply_feeding_schedule(schedule_id: string): void
-        + adjust_water_filtration(filter_id: string, mode: string): void
+    class CommandPublisher {
+        - mqttClient: MqttClient
+        + publishFeederCommand(feederId: string, command: string, payload: string): boolean
+    }
+
+    class TelemetryInboundBridge {
+        - mqttClient: MqttClient
+        - amqpClient: AmqpClient
+        + startTelemetryLoop(): void
+        - handleRawHardwareTelemetry(topic: string, payload: bytes): void
     }
 
     class GPIODriver {
@@ -39,8 +44,9 @@ package "IoT Gateway (Reactive Internal Architecture)" {
         автономно сработает fire_local_siren()
     end note
 
-    IncidentEventListener --> TimeoutManager : управляет жизненным циклом таймеров тревоги
-    IncidentEventListener --> AutomationController : триггерит сценарии для кормушек
+    IncidentEventListener --> TimeoutManager : управляет жизненным циклом таймеров
+    IncidentEventListener --> CommandPublisher : транслирует команды автоматизации
+    TelemetryInboundBridge --> CommandPublisher : использует общие сетевые ресурсы
     TimeoutManager --> GPIODriver : физически включает сирену в обход сети
 }
 
