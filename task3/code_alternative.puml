@@ -1,56 +1,73 @@
-@startuml Архитектура_АгроТех_C4_Оркестрация_Код
+@startuml Архитектура_АгроTech_C4_API_First_Generic_Код
 
-title Диаграмма кода (C4): Вариант Б — Архитектура классов Core Service
+title Диаграмма кода (C4): Вариант А — Компоненты Умного Edge-Агента (Общие типы)
 
-package "Core Service (Business Logic Architecture)" {
+package "Smart Edge Agent Architecture" {
 
-    class IncidentService {
-        - dal: DataAccessLayer
-        - dispatcher: CommandDispatcher
-        - gpio: GPIOController
-        + handle_raw_event(event: RawEvent): void
-        + process_ack_timeout(incident_id: string): void
+    enum ConnectionState {
+        ONLINE
+        OFFLINE
+        SYNCHRONIZING
     }
 
-    class TelemetryService {
-        - dal: DataAccessLayer
-        + handle_hardware_metrics(metrics: HardwareMetrics): void
-        + forecast_feed_consumption(): FeedForecast
-        + recount_livestock(): int
+    class CloudStreamClient {
+        - connectionState: ConnectionState
+        - fifoBuffer: FifoBuffer
+        - fallbackEngine: FallbackEngine
+        + connectToCloud(): void
+        + sendIncident(event: IncidentData): boolean
+        + sendTelemetry(metrics: TelemetryBatch): boolean
+        - onCloudCommandReceived(command: CloudCommand): void
+        - onNetworkReconnected(): void
     }
 
-    class DataAccessLayer {
-        - session_maker: sessionmaker
-        + save_incident(incident: IncidentModel): void
-        + update_incident_status(id: string, status: string): void
-        + save_metrics(metrics: MetricsModel): void
-        + get_active_incidents(): List[IncidentModel]
+    class FifoBuffer {
+        - storagePath: string
+        - maxDiskSizeBytes: long
+        + push(payload: bytes, priority: int): void
+        + popBatch(size: int): List<bytes>
+        + ackBatch(batchIds: List<string>): void
+        - clearOldestTelemetry(): void
     }
 
-    class CommandDispatcher {
-        - amqp_client: FastStreamClient
-        + send_feeding_command(feeder_id: string, amount: float): void
-        + send_central_alert(incident: IncidentModel): void
+    class VideoStreamProcessor {
+        - rtspSource: string
+        - neuralNetwork: NeuralEngine
+        - streamClient: CloudStreamClient
+        - fifoBuffer: FifoBuffer
+        + startAnalysisLoop(): void
+        - processFrame(frame: bytes): void
     }
 
-    class GPIOController {
-        - pin_number: int
-        + turn_on_siren(): void
-        + turn_off_siren(): void
+    class FallbackEngine {
+        - hardwareClient: MqttClient
+        - isAutonomousModeActive: boolean
+        + activateAutonomousMode(): void
+        + deactivateAutonomousMode(): void
+        - runDefaultFeedingSchedule(): void
     }
-    
-    note left of IncidentService::process_ack_timeout
-        Реализация жесткой логики оркестрации:
-        Если в течение 5 секунд нет ACK от 
-        мобильного приложения, оркестратор 
-        явно вызывает gpio.turn_on_siren()
+
+    class HardwareBridge {
+        - hardwareClient: MqttClient
+        - streamClient: CloudStreamClient
+        + forwardLocalMetricsToAgent(): void
+        + sendCommandToDevice(targetId: string, cmd: bytes): void
+    }
+
+    note top of FifoBuffer
+        Компонент Offline-first отказоустойчивости.
+        Если ConnectionState == OFFLINE, модули
+        видеоаналитики и железа пишут данные сюда.
+        При лимите диска срабатывает clearOldestTelemetry().
     end note
 
-    IncidentService --> DataAccessLayer : использует для изменения состояния
-    IncidentService --> CommandDispatcher : отправляет команды
-    IncidentService --> GPIOController : управляет сиреной напрямую
-    
-    TelemetryService --> DataAccessLayer : пишет логи кормления/метрик
+    CloudStreamClient --> ConnectionState : отслеживает состояние аплинка
+    CloudStreamClient --> FifoBuffer : вычитывает накопленные данные при восстановлении сети
+    CloudStreamClient --> FallbackEngine : переключает режимы управления фермой
+    VideoStreamProcessor --> CloudStreamClient : шлет аномалии напрямую в сеть
+    VideoStreamProcessor --> FifoBuffer : сбрасывает аномалии на диск при аварии
+    HardwareBridge --> CloudStreamClient : передает метрики устройств
+    FallbackEngine --> HardwareBridge : генерирует резервные локальные команды
 }
 
 @enduml
